@@ -14,6 +14,46 @@ const layerName = (id: string) => RUBRIC.find((l) => l.id === id)?.name ?? id;
 const heuristicName = (id: string) =>
   RUBRIC.flatMap((l) => l.heuristics).find((h) => h.id === id)?.name ?? id;
 
+// The layers that run on every screen, and the packs that only run for one dashboard type.
+const CORE_LAYERS = RUBRIC.filter((l) => !l.appliesTo);
+const PACK_LAYERS = RUBRIC.filter((l) => l.appliesTo);
+const TOTAL_CHECKS = RUBRIC.reduce((n, l) => n + l.heuristics.length, 0);
+
+// One line of plain English per core layer, for the landing page.
+const LAYER_BLURB: Record<string, string> = {
+  usability: "Nielsen's ten, read through a dashboard lens — status, control, consistency, recovery.",
+  dashboard: "Does the screen answer one clear question, and is the most important number the loudest?",
+  dataviz: "Honest axes, the right chart for the job, colour that carries meaning without distorting it.",
+  accessibility: "Contrast, colour-blind safety, and meaning that survives when colour is taken away.",
+};
+
+// What the loader says while a review runs. The checks are read straight from the
+// rubric, so editing lib/rubric.ts updates this too.
+const ASIDES = [
+  {
+    line: "Still going — it was told not to give up",
+    sub: "Google's free models get busy. Aman set it to retry across four of them rather than fail on you.",
+  },
+  {
+    line: "This rubric is hand-written, not borrowed",
+    sub: "Aman built the evaluator and tunes what counts as a real problem himself.",
+  },
+  {
+    line: "Reading the screen the way a reviewer would",
+    sub: "Axis baselines, label units, colour pairs — the parts most people skim straight past.",
+  },
+];
+
+const LOADER_LINES: { line: string; sub: string }[] = [];
+(RUBRIC.find((l) => l.id === "usability")?.heuristics ?? []).forEach((h, i) => {
+  LOADER_LINES.push({ line: `Checking ${h.name.toLowerCase()}`, sub: h.question });
+  if ((i + 1) % 4 === 0 && ASIDES[(i + 1) / 4 - 1]) LOADER_LINES.push(ASIDES[(i + 1) / 4 - 1]);
+});
+ASIDES.slice(Math.floor(((RUBRIC.find((l) => l.id === "usability")?.heuristics.length ?? 0) / 4))).forEach((a) =>
+  LOADER_LINES.push(a),
+);
+if (!LOADER_LINES.length) LOADER_LINES.push({ line: "Reviewing your screen", sub: "This usually takes about a minute." });
+
 // Shrinks very large screenshots so the upload stays under the API's image limits.
 async function prepareImage(file: File): Promise<{ blob: Blob; url: string }> {
   const bitmap = await createImageBitmap(file);
@@ -54,13 +94,17 @@ export default function Home() {
   const [drag, setDrag] = useState(false);
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [step, setStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [active, setActive] = useState<number | null>(null);
   const [pendingExport, setPendingExport] = useState<"md" | "json" | null>(null);
+  const [dark, setDark] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const toolRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setDark(document.documentElement.dataset.theme === "dark");
     try {
       const saved = localStorage.getItem("he-access-code");
       if (saved) setAccessCode(saved);
@@ -79,11 +123,24 @@ export default function Home() {
       .catch(() => {});
   }, []);
 
+  function toggleTheme() {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.dataset.theme = next ? "dark" : "light";
+    try {
+      localStorage.setItem("he-theme", next ? "dark" : "light");
+    } catch {}
+  }
+
   useEffect(() => {
     if (!loading) return;
     const start = Date.now();
-    const t = setInterval(() => setElapsed(Math.round((Date.now() - start) / 1000)), 1000);
-    return () => clearInterval(t);
+    const tick = setInterval(() => setElapsed(Math.round((Date.now() - start) / 1000)), 1000);
+    const rotate = setInterval(() => setStep((s) => (s + 1) % LOADER_LINES.length), 2600);
+    return () => {
+      clearInterval(tick);
+      clearInterval(rotate);
+    };
   }, [loading]);
 
   const onFile = useCallback(async (file: File | undefined) => {
@@ -94,8 +151,12 @@ export default function Home() {
     }
     setError(null);
     setReport(null);
-    const prepared = await prepareImage(file);
-    setImage({ ...prepared, name: file.name });
+    try {
+      const prepared = await prepareImage(file);
+      setImage({ ...prepared, name: file.name });
+    } catch {
+      setError("That image couldn't be opened. Try re-exporting it as a PNG or JPEG.");
+    }
   }, []);
 
   useEffect(() => {
@@ -114,6 +175,8 @@ export default function Home() {
   async function run() {
     if (!image) return;
     setLoading(true);
+    setStep(0);
+    setElapsed(0);
     setError(null);
     setReport(null);
     setActive(null);
@@ -154,171 +217,276 @@ export default function Home() {
 
   return (
     <main className="page">
-      <header className="header">
-        <div className="brand">
-          <p className="eyebrow">AI-assisted design experiment</p>
-          <h1>Dashboard Heuristic Evaluator</h1>
-          <p className="lede">
-            Upload a dashboard screenshot and get a scored heuristic review: what's wrong, where it is on the screen,
-            how serious it is, and what to do about it.
-          </p>
-          <p className="byline">
-            Built by{" "}
-            <a href={PROFILE.links.portfolio} target="_blank" rel="noopener noreferrer">
-              {PROFILE.name}
-            </a>
-            , {PROFILE.role.split(" · ")[0]} at {PROFILE.place}
-          </p>
-          <nav className="links" aria-label="Aman Mujawar's profiles">
-            <a href={PROFILE.links.portfolio} target="_blank" rel="noopener noreferrer">
-              Portfolio
-            </a>
-            <a href={PROFILE.links.linkedin} target="_blank" rel="noopener noreferrer">
-              LinkedIn
-            </a>
-            <a href={PROFILE.links.behance} target="_blank" rel="noopener noreferrer">
-              Behance
-            </a>
-            <a href={FEEDBACK_MAILTO}>Email</a>
-          </nav>
+      <div className="topbar">
+        <span className="wordmark">Heuristic Evaluator</span>
+        <nav className="topnav">
+          <a href="#checks">What it checks</a>
+          <a href="#tool">Run a review</a>
+          <a href="#about">About Aman</a>
+          <a href={PROFILE.links.portfolio} target="_blank" rel="noopener noreferrer">
+            Portfolio ↗
+          </a>
+        </nav>
+        <button
+          className="theme-toggle"
+          onClick={toggleTheme}
+          role="switch"
+          aria-checked={dark}
+          aria-label="Dark mode"
+          title={dark ? "Switch to light" : "Switch to dark"}
+        >
+          <span className="knob">{dark ? "🌙" : "☀️"}</span>
+        </button>
+      </div>
+
+      <header className="hero">
+        <span className="chip">AI-assisted design experiment</span>
+        <h1>
+          Find what's quietly <em>wrong</em> with your dashboard
+        </h1>
+        <p className="lede">
+          Upload a screenshot. Get a scored heuristic review — every problem pinned to the element that caused it, with
+          the fix, and the UI components worth adding.
+        </p>
+        <div className="hero-actions">
+          <button className="btn" onClick={() => toolRef.current?.scrollIntoView({ behavior: "smooth" })}>
+            Review a screen →
+          </button>
+          <a className="btn secondary" href="#checks">
+            See what it checks
+          </a>
+        </div>
+        <p className="byline">
+          Built by{" "}
+          <a href={PROFILE.links.portfolio} target="_blank" rel="noopener noreferrer">
+            {PROFILE.name}
+          </a>
+          , {PROFILE.role.split(" · ")[0]} at {PROFILE.place}
+        </p>
+        <div className="statline">
+          <div>
+            <strong>{TOTAL_CHECKS}</strong>
+            <span>heuristic checks</span>
+          </div>
+          <div>
+            <strong>{CORE_LAYERS.length}</strong>
+            <span>core layers</span>
+          </div>
+          <div>
+            <strong>{DASHBOARD_TYPES.length}</strong>
+            <span>dashboard types</span>
+          </div>
+          <div>
+            <strong>~60s</strong>
+            <span>per review</span>
+          </div>
         </div>
       </header>
 
-      <section className="card setup">
-        <div
-          className={`drop ${drag ? "drag" : ""}`}
-          onClick={() => inputRef.current?.click()}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDrag(true);
-          }}
-          onDragLeave={() => setDrag(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDrag(false);
-            onFile(e.dataTransfer.files[0]);
-          }}
-        >
-          {image ? (
-            <img src={image.url} alt="Uploaded screenshot" />
-          ) : (
-            <>
-              <strong>Drop a dashboard screenshot here</strong>
-              <span className="hint">or click to choose a file, or paste with Ctrl+V</span>
-              <span className="hint">PNG, JPEG or WebP · nothing is stored after the review</span>
-            </>
-          )}
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            hidden
-            onChange={(e) => onFile(e.target.files?.[0])}
-          />
+      <section className="section" id="checks">
+        <div className="section-head">
+          <div>
+            <span className="chip">The rubric</span>
+            <h2>Four layers run on every screen</h2>
+          </div>
+          <p>
+            Each layer is scored out of 100. Every issue is tied back to the specific check it broke, so a score is
+            never just a number.
+          </p>
+        </div>
+        <div className="bento">
+          {CORE_LAYERS.map((layer, i) => (
+            <div className="tile" key={layer.id}>
+              <span className="tile-index">{String(i + 1).padStart(2, "0")}</span>
+              <h3>{layer.name}</h3>
+              <p>{LAYER_BLURB[layer.id] ?? `${layer.heuristics.length} checks.`}</p>
+              <ul className="tile-list">
+                {layer.heuristics.slice(0, 3).map((h) => (
+                  <li key={h.id}>{h.name}</li>
+                ))}
+                {layer.heuristics.length > 3 && <li>+{layer.heuristics.length - 3} more</li>}
+              </ul>
+            </div>
+          ))}
+          <div className="tile wide accent">
+            <span className="chip">Then, depending on the screen</span>
+            <h3>The rest of the rubric is dashboard-specific</h3>
+            <p>
+              Tell it what kind of dashboard this is — or let it work that out — and one extra pack of checks switches
+              on for that domain. A finance screen gets asked about sign conventions and reconciliation; an operations
+              screen gets asked about status colours and alert priority. The other packs stay out of the way.
+            </p>
+            <ul className="tile-list">
+              {PACK_LAYERS.map((l) => (
+                <li key={l.id}>
+                  {l.name} · {l.heuristics.length} checks
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section className="section" id="tool" ref={toolRef}>
+        <div className="section-head">
+          <div>
+            <span className="chip">Run a review</span>
+            <h2>Drop a dashboard in</h2>
+          </div>
+          <p>Nothing is stored. The screenshot goes to Google's Gemini API for the review and nowhere else.</p>
         </div>
 
-        <div>
-          <div className="field">
-            <label htmlFor="type">What kind of dashboard is this?</label>
-            <select id="type" value={type} onChange={(e) => setType(e.target.value)}>
-              <option value="auto">Work it out for me</option>
-              {DASHBOARD_TYPES.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-            <span className="hint-text">Picking a type turns on the extra checks for that kind of screen.</span>
-          </div>
-
-          <div className="field">
-            <label htmlFor="context">Who is it for? (optional)</label>
-            <textarea
-              id="context"
-              placeholder="e.g. 'CFO reviewing weekly cash position before a Monday call'"
-              value={context}
-              onChange={(e) => setContext(e.target.value)}
-            />
-            <span className="hint-text">A line of context makes the findings noticeably sharper.</span>
-          </div>
-
-          <div className="field">
-            <label id="access-label">Which key should run the review?</label>
-            <div className="segmented" role="radiogroup" aria-labelledby="access-label">
-              <button
-                type="button"
-                role="radio"
-                aria-checked={mode === "demo"}
-                className={mode === "demo" ? "on" : ""}
-                disabled={!access.serverKey}
-                onClick={() => setMode("demo")}
-              >
-                Aman&apos;s demo key
-                <small>
-                  {!access.serverKey
-                    ? "Not available here"
-                    : demoSpent
-                      ? "Used up for today"
-                      : `${access.demoLeft} of ${access.demoLimit} reviews left today`}
-                </small>
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={mode === "own"}
-                className={mode === "own" ? "on" : ""}
-                onClick={() => setMode("own")}
-              >
-                My own key
-                <small>Free from Google · no limit from us</small>
-              </button>
+        <div className="tool">
+          <div className="card" style={{ padding: 18 }}>
+            <div
+              className={`drop ${drag ? "drag" : ""}`}
+              onClick={() => inputRef.current?.click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDrag(true);
+              }}
+              onDragLeave={() => setDrag(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDrag(false);
+                onFile(e.dataTransfer.files[0]);
+              }}
+            >
+              {image ? (
+                <img src={image.url} alt="Uploaded screenshot" />
+              ) : (
+                <>
+                  <strong>Drop a dashboard screenshot here</strong>
+                  <span className="hint">or click to choose a file, or paste with Ctrl+V</span>
+                  <span className="hint">PNG, JPEG or WebP</span>
+                </>
+              )}
+              <input
+                ref={inputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                hidden
+                onChange={(e) => onFile(e.target.files?.[0])}
+              />
             </div>
-            {mode === "own" && (
-              <>
-                <input
-                  id="key"
-                  type="password"
-                  placeholder="Paste your Gemini API key"
-                  value={ownKey}
-                  onChange={(e) => setOwnKey(e.target.value)}
-                />
-                <span className="hint-text">
-                  Create one free at{" "}
-                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">
-                    Google AI Studio
-                  </a>
-                  . It stays in your browser and is sent only to Google to run your review.
-                </span>
-              </>
-            )}
-            {mode === "demo" && access.serverKey && !demoSpent && (
-              <span className="hint-text">Shared allowance, so it can run out. Your own key never does.</span>
-            )}
-            {mode === "demo" && access.serverKey && demoSpent && (
-              <span className="hint-text">
-                That's the demo used up for today. Switch to your own key to keep going — it&apos;s free and takes about
-                a minute to set up.
-              </span>
-            )}
           </div>
 
-          {needsCode && mode === "demo" && (
+          <div className="card">
             <div className="field">
-              <label htmlFor="code">Access code</label>
-              <input id="code" type="password" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} />
+              <label htmlFor="type">What kind of dashboard is this?</label>
+              <select id="type" value={type} onChange={(e) => setType(e.target.value)}>
+                <option value="auto">Work it out for me</option>
+                {DASHBOARD_TYPES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+              <span className="hint-text">This decides which extra pack of checks switches on.</span>
             </div>
-          )}
 
-          <button className="btn" disabled={!canRun} onClick={run}>
-            {loading ? "Reviewing…" : "Review this screen"}
-          </button>
-          {loading && (
-            <div className="progress">
-              <span className="spinner" /> Walking the rubric, checking every chart and label ({elapsed}s). Usually
-              about a minute.
+            <div className="field">
+              <label htmlFor="context">Who is it for? (optional)</label>
+              <textarea
+                id="context"
+                placeholder="e.g. 'CFO reviewing weekly cash position before a Monday call'"
+                value={context}
+                onChange={(e) => setContext(e.target.value)}
+              />
+              <span className="hint-text">A line of context makes the findings noticeably sharper.</span>
             </div>
-          )}
-          {error && <div className="error">{error}</div>}
+
+            <div className="field">
+              <label id="access-label">Which key should run the review?</label>
+              <div className="segmented" role="radiogroup" aria-labelledby="access-label">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === "demo"}
+                  className={mode === "demo" ? "on" : ""}
+                  disabled={!access.serverKey}
+                  onClick={() => setMode("demo")}
+                >
+                  Aman&apos;s demo key
+                  <small>
+                    {!access.serverKey
+                      ? "Not available here"
+                      : demoSpent
+                        ? "Used up for today"
+                        : `${access.demoLeft} of ${access.demoLimit} reviews left today`}
+                  </small>
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === "own"}
+                  className={mode === "own" ? "on" : ""}
+                  onClick={() => setMode("own")}
+                >
+                  My own key
+                  <small>Free from Google · no limit from us</small>
+                </button>
+              </div>
+              {mode === "own" && (
+                <>
+                  <input
+                    id="key"
+                    type="password"
+                    placeholder="Paste your Gemini API key"
+                    value={ownKey}
+                    onChange={(e) => setOwnKey(e.target.value)}
+                    style={{ marginTop: 10 }}
+                  />
+                  <span className="hint-text">
+                    Create one free at{" "}
+                    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">
+                      Google AI Studio
+                    </a>
+                    . It stays in your browser and is sent only to Google to run your review.
+                  </span>
+                </>
+              )}
+              {mode === "demo" && access.serverKey && !demoSpent && (
+                <span className="hint-text">Shared allowance, so it can run out. Your own key never does.</span>
+              )}
+              {mode === "demo" && access.serverKey && demoSpent && (
+                <span className="hint-text">
+                  That&apos;s the demo used up for today. Switch to your own key to keep going — it&apos;s free and
+                  takes about a minute to set up.
+                </span>
+              )}
+            </div>
+
+            {needsCode && mode === "demo" && (
+              <div className="field">
+                <label htmlFor="code">Access code</label>
+                <input id="code" type="password" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} />
+              </div>
+            )}
+
+            <button className="btn" disabled={!canRun} onClick={run} style={{ width: "100%", justifyContent: "center" }}>
+              {loading ? "Reviewing…" : "Review this screen"}
+            </button>
+
+            {loading && (
+              <div className="loader" role="status" aria-live="polite">
+                <span className="orb" aria-hidden="true" />
+                <div className="loader-body">
+                  <div className="loader-line" key={step}>
+                    {LOADER_LINES[step].line}
+                  </div>
+                  <div className="loader-sub">{LOADER_LINES[step].sub}</div>
+                  <div className="track" aria-hidden="true">
+                    <div />
+                  </div>
+                  <div className="loader-sub" style={{ marginTop: 8 }}>
+                    {elapsed}s · usually about a minute
+                  </div>
+                </div>
+              </div>
+            )}
+            {error && <div className="error">{error}</div>}
+          </div>
         </div>
       </section>
 
@@ -326,7 +494,7 @@ export default function Home() {
         <section className="report">
           <div className="card summary">
             <ScoreRing score={report.overall_score} />
-            <div>
+            <div style={{ flex: 1, minWidth: 260 }}>
               <div className="meta">
                 <span className="pill">{DASHBOARD_TYPES.find((t) => t.id === report.dashboard_type)?.label}</span>
                 <span className="pill">{report.issues.length} issues</span>
@@ -421,10 +589,10 @@ export default function Home() {
                   </span>
                 </span>
                 <button className="btn secondary" onClick={() => setPendingExport("md")}>
-                  Export Markdown
+                  Markdown
                 </button>
                 <button className="btn secondary" onClick={() => setPendingExport("json")}>
-                  Export JSON
+                  JSON
                 </button>
               </div>
               {report.issues.length === 0 && (
@@ -463,9 +631,31 @@ export default function Home() {
             </div>
           </div>
 
+          {report.suggested_components?.length > 0 && (
+            <div className="card">
+              <div className="section-head" style={{ marginBottom: 0 }}>
+                <div>
+                  <span className="chip">Suggested UI</span>
+                  <h2>Components worth adding</h2>
+                </div>
+                <p>Named patterns that would solve the problems found above. Each one replaces something specific.</p>
+              </div>
+              <div className="components">
+                {report.suggested_components.map((c, i) => (
+                  <div className="component" key={i}>
+                    <span className="chip">{c.pattern}</span>
+                    <h3>{c.name}</h3>
+                    <p>{c.why}</p>
+                    <div className="swap">In place of: {c.replaces}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {report.strengths.length > 0 && (
             <div className="card strengths">
-              <h2>Worth keeping</h2>
+              <h2 style={{ fontSize: 19 }}>Worth keeping</h2>
               <ul>
                 {report.strengths.map((s, i) => (
                   <li key={i}>{s}</li>
@@ -477,7 +667,13 @@ export default function Home() {
       )}
 
       {pendingExport && (
-        <div className="scrim" role="dialog" aria-modal="true" aria-labelledby="dlg-title" onClick={() => setPendingExport(null)}>
+        <div
+          className="scrim"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dlg-title"
+          onClick={() => setPendingExport(null)}
+        >
           <div className="dialog card" onClick={(e) => e.stopPropagation()}>
             <h2 id="dlg-title">One thing before you take this away</h2>
             <p>
@@ -485,8 +681,8 @@ export default function Home() {
               what the evaluator checks and what counts as a serious problem.
             </p>
             <p>
-              If a finding felt wrong, or it missed something obvious on your screen, that's exactly what he'd like to
-              hear.
+              If a finding felt wrong, or it missed something obvious on your screen, that&apos;s exactly what he&apos;d
+              like to hear.
             </p>
             <div className="dialog-actions">
               <a className="btn secondary" href={FEEDBACK_MAILTO}>
@@ -503,9 +699,10 @@ export default function Home() {
         </div>
       )}
 
-      <footer className="site-footer">
+      <footer className="site-footer" id="about">
         <div className="about">
-          <h2>Why I built this</h2>
+          <span className="chip">Why I built this</span>
+          <h2 style={{ marginTop: 14 }}>A designer's rubric, wired to a vision model</h2>
           {PROFILE.why.map((p, i) => (
             <p key={i}>{p}</p>
           ))}
@@ -533,8 +730,8 @@ export default function Home() {
         </div>
         <p className="smallprint">
           Findings are generated by AI from a static screenshot and should be checked by a designer. Interactive
-          behaviour — hover, filtering, loading states — can't be judged from an image. Screenshots are sent to Google's
-          Gemini API for the review and are not stored by this site.
+          behaviour — hover, filtering, loading states — can&apos;t be judged from an image. Screenshots are sent to
+          Google&apos;s Gemini API for the review and are not stored by this site.
         </p>
       </footer>
     </main>
@@ -548,7 +745,7 @@ function ScoreRing({ score }: { score: number }) {
   return (
     <div className="score-ring">
       <svg width="120" height="120">
-        <circle cx="60" cy="60" r={r} fill="none" stroke="var(--border)" strokeWidth="10" />
+        <circle cx="60" cy="60" r={r} fill="none" stroke="var(--line)" strokeWidth="10" />
         <circle
           cx="60"
           cy="60"

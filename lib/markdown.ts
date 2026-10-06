@@ -46,6 +46,19 @@ export function reportToMarkdown(report: Report, imageName: string): string {
       ``,
     );
   });
+  if (report.suggested_components?.length) {
+    lines.push(`## Components worth adding`, ``);
+    report.suggested_components.forEach((c) => {
+      lines.push(
+        `### ${c.name}`,
+        ``,
+        `- **Pattern:** ${c.pattern}`,
+        `- **Why:** ${c.why}`,
+        `- **In place of:** ${c.replaces}`,
+        ``,
+      );
+    });
+  }
   if (report.strengths.length) {
     lines.push(`## Strengths`, ``, ...report.strengths.map((s) => `- ${s}`), ``);
   }

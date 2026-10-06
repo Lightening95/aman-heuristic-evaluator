@@ -24,7 +24,9 @@ Severity uses Nielsen's scale: 1 cosmetic, 2 minor, 3 major, 4 catastrophe (misl
 
 For each issue give box_2d, the bounding box of the element at fault as [ymin, xmin, ymax, xmax] normalised to 0-1000. Make the box tight around that element.
 
-Score each layer 0-100, where 100 means no issues found for that layer and each issue lowers the score in proportion to its severity. Write recommendations a designer can act on directly. List genuine strengths worth keeping. Keep the summary to two or three sentences.`;
+Score each layer 0-100, where 100 means no issues found for that layer and each issue lowers the score in proportion to its severity. Write recommendations a designer can act on directly. List genuine strengths worth keeping. Keep the summary to two or three sentences.
+
+Finally, propose 3 to 6 concrete UI components or patterns this screen should adopt, in suggested_components. Name a real, recognised pattern a designer could go and build \u2014 for example a comparison matrix, breadcrumb trail, segmented control, sparkline, small multiples, bullet chart, data table with sticky header, filter chip bar, empty state, skeleton loader, drill-down drawer, annotation callout, legend with direct labels, time-range picker, KPI card with delta, progressive disclosure accordion. Do not invent names. For each one: "pattern" is the pattern's common name, "name" is what you would call it on this specific screen, "why" ties it to a problem you actually found here, and "replaces" names the element or gap on screen it would take the place of. Only propose a component that solves something you reported or observed; do not pad the list.`;
 
 const { $schema: _ignored, ...RESPONSE_SCHEMA } = z.toJSONSchema(ModelOutputSchema);
 
@@ -151,6 +153,7 @@ function finalise(result: ModelOutput, requested: string, model: string): Report
     detected_type: type,
     summary: result.summary,
     strengths: result.strengths,
+    suggested_components: result.suggested_components,
     dashboard_type: type,
     layer_scores,
     issues,

@@ -26,6 +26,14 @@ export const ModelOutputSchema = z.object({
     }),
   ),
   strengths: z.array(z.string()),
+  suggested_components: z.array(
+    z.object({
+      name: z.string(),
+      pattern: z.string(),
+      why: z.string(),
+      replaces: z.string(),
+    }),
+  ),
 });
 
 export type ModelOutput = z.infer<typeof ModelOutputSchema>;
