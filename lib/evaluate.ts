@@ -4,16 +4,22 @@ import { DashboardType, RUBRIC, layersFor, rubricAsText } from "./rubric";
 import { ModelOutputSchema, ModelOutput, Report } from "./schema";
 
 // Free-tier models, tried in order when one is overloaded. GEMINI_MODEL, if set, goes first.
+// Checked against ai.google.dev/gemini-api/docs/models on 2026-10-06. Google retires model
+// names for new keys, so if one starts 404ing it is dropped here and the next one is used.
 const MODELS = [
   ...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []),
   "gemini-3.8-flash",
   "gemini-3.7-flash",
+  "gemini-3.6-flash",
   "gemini-3.5-flash",
-  "gemini-2.5-flash",
+  "gemini-3.5-flash-lite",
 ].filter((m, i, all) => all.indexOf(m) === i);
 
 // Overloaded (503), rate-limited (429) or internal (500) errors are worth retrying.
 const isTransient = (err: unknown) => err instanceof ApiError && [429, 500, 503].includes(err.status);
+// A 404 means this key cannot use that model name at all, so retrying it is pointless —
+// move straight on to the next model in the list.
+const isModelGone = (err: unknown) => err instanceof ApiError && err.status === 404;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const SYSTEM_PROMPT = `You are a senior UX researcher and information designer running a heuristic evaluation of a dashboard screenshot.
@@ -88,14 +94,22 @@ export async function evaluateScreenshot(opts: {
         response = await request(candidate);
         model = candidate;
       } catch (err) {
-        if (!isTransient(err)) throw err;
         lastError = err;
+        if (isModelGone(err)) break;
+        if (!isTransient(err)) throw err;
         await sleep(2000);
       }
     }
     if (response) break;
   }
-  if (!response) throw lastError;
+  if (!response) {
+    if (isModelGone(lastError)) {
+      throw new Error(
+        "Google no longer offers any of the models this app asks for. The model list in lib/evaluate.ts needs updating.",
+      );
+    }
+    throw lastError;
+  }
 
   const finish = response.candidates?.[0]?.finishReason;
   if (finish === "MAX_TOKENS") {
