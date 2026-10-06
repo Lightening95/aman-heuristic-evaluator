@@ -81,6 +81,30 @@ function download(name: string, content: string, type: string) {
 }
 
 type Access = { serverKey: boolean; demoLimit: number; demoLeft: number };
+type ExportKind = "pdf" | "md" | "json";
+
+// The three ways to take a review away. PDF goes through the browser's own print
+// dialogue, so it costs nothing and needs no extra library.
+const EXPORTS: { kind: ExportKind; label: string; name: string; blurb: string }[] = [
+  {
+    kind: "pdf",
+    label: "PDF",
+    name: "Save as PDF",
+    blurb: "The whole review laid out for printing or sending — screenshot, findings and components.",
+  },
+  {
+    kind: "md",
+    label: "Markdown",
+    name: "Download .md",
+    blurb: "Plain text with headings. Drops straight into Notion, Docs or a design ticket.",
+  },
+  {
+    kind: "json",
+    label: "JSON",
+    name: "Download .json",
+    blurb: "Every field, including the on-screen coordinates. For piping somewhere else.",
+  },
+];
 
 export default function Home() {
   const [image, setImage] = useState<{ blob: Blob; url: string; name: string } | null>(null);
@@ -98,7 +122,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [active, setActive] = useState<number | null>(null);
-  const [pendingExport, setPendingExport] = useState<"md" | "json" | null>(null);
+  const [pendingExport, setPendingExport] = useState<ExportKind | null>(null);
   const [dark, setDark] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const toolRef = useRef<HTMLDivElement>(null);
@@ -208,8 +232,14 @@ export default function Home() {
 
   const baseName = image?.name.replace(/\.[^.]+$/, "") ?? "dashboard";
 
-  function runExport(kind: "md" | "json") {
+  function runExport(kind: ExportKind) {
     if (!report || !image) return;
+    if (kind === "pdf") {
+      setPendingExport(null);
+      // Let the dialog close before the browser takes over the window.
+      setTimeout(() => window.print(), 80);
+      return;
+    }
     if (kind === "md") download(`${baseName}-review.md`, reportToMarkdown(report, image.name), "text/markdown");
     else download(`${baseName}-review.json`, reportToJson(report, image.name), "application/json");
     setPendingExport(null);
@@ -423,8 +453,8 @@ export default function Home() {
                   className={mode === "own" ? "on" : ""}
                   onClick={() => setMode("own")}
                 >
-                  My own key
-                  <small>Free from Google · no limit from us</small>
+                  Use my own key
+                  <small>Unlimited · set up in a minute</small>
                 </button>
               </div>
               {mode === "own" && (
@@ -432,17 +462,17 @@ export default function Home() {
                   <input
                     id="key"
                     type="password"
-                    placeholder="Paste your Gemini API key"
+                    placeholder="Paste your API key"
                     value={ownKey}
                     onChange={(e) => setOwnKey(e.target.value)}
                     style={{ marginTop: 10 }}
                   />
                   <span className="hint-text">
-                    Create one free at{" "}
+                    Don&apos;t have one?{" "}
                     <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">
-                      Google AI Studio
+                      Create a free key ↗
                     </a>
-                    . It stays in your browser and is sent only to Google to run your review.
+                    . It is stored in your browser only, and is used for nothing but running your reviews.
                   </span>
                 </>
               )}
@@ -588,12 +618,7 @@ export default function Home() {
                     <span>Hover a card or a numbered pin to see where on the screen it is.</span>
                   </span>
                 </span>
-                <button className="btn secondary" onClick={() => setPendingExport("md")}>
-                  Markdown
-                </button>
-                <button className="btn secondary" onClick={() => setPendingExport("json")}>
-                  JSON
-                </button>
+                <span className="toolbar-note">Exports are at the end of the review</span>
               </div>
               {report.issues.length === 0 && (
                 <div className="card issue">Nothing flagged against the rubric. Worth a human pass anyway.</div>
@@ -663,6 +688,42 @@ export default function Home() {
               </ul>
             </div>
           )}
+
+          <div className="card exports">
+            <div className="section-head" style={{ marginBottom: 0 }}>
+              <div>
+                <span className="chip">Take it with you</span>
+                <h2>Export this review</h2>
+              </div>
+              <p>Three formats, same review. Nothing leaves your browser when you export.</p>
+            </div>
+            <div className="export-grid">
+              {EXPORTS.map((e) => (
+                <div className="export-card" key={e.kind}>
+                  <span className="format">{e.label}</span>
+                  <p>{e.blurb}</p>
+                  <button className="btn" onClick={() => setPendingExport(e.kind)}>
+                    {e.name}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="print-credits" aria-hidden="true">
+            <hr />
+            <p>
+              <strong>Dashboard Heuristic Evaluator</strong> — an AI-assisted design experiment by {PROFILE.name},{" "}
+              {PROFILE.role}, {PROFILE.place}.
+            </p>
+            <p>
+              The rubric behind these scores is still being refined, so read this as a well-informed second opinion
+              rather than a verdict. Notes on what it got right or wrong are genuinely welcome.
+            </p>
+            <p>
+              {PROFILE.links.portfolio} · {PROFILE.links.linkedin} · {PROFILE.links.behance} · {PROFILE.email}
+            </p>
+          </div>
         </section>
       )}
 
@@ -689,7 +750,7 @@ export default function Home() {
                 Send feedback
               </a>
               <button className="btn" onClick={() => runExport(pendingExport)}>
-                Download {pendingExport === "md" ? "Markdown" : "JSON"}
+                {pendingExport === "pdf" ? "Open print view" : `Download ${pendingExport === "md" ? "Markdown" : "JSON"}`}
               </button>
             </div>
             <button className="dialog-close" onClick={() => setPendingExport(null)} aria-label="Close">
